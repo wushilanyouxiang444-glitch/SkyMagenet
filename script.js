@@ -13,7 +13,8 @@ const screens = {
     menu: document.getElementById("menuScreen"),
     settings: document.getElementById("settingsScreen"),
     game: document.getElementById("gameScreen"),
-    clear: document.getElementById("clearScreen")
+    clear: document.getElementById("clearScreen"),
+    gameOver: document.getElementById("gameOverScreen")
 };
 
 function showScreen(name) {
@@ -39,6 +40,196 @@ let gameRunning = false;
 let stageCleared = false;
 
 let gameLoopRequest = null;
+
+const PROGRESS_KEY = "skymagnet-progress-v1";
+
+const MAX_STAGES = 20;
+
+function readProgress() {
+
+    try {
+
+        const saved = JSON.parse(
+            localStorage.getItem(PROGRESS_KEY) || "null"
+        );
+
+        if (!saved || typeof saved !== "object") {
+            return {
+                unlockedStage: 1,
+                clearedStages: {},
+                bestTimes: {}
+            };
+        }
+
+        return {
+            unlockedStage: Math.min(
+                MAX_STAGES,
+                Math.max(1, Number(saved.unlockedStage) || 1)
+            ),
+            clearedStages: saved.clearedStages || {},
+            bestTimes: saved.bestTimes || {}
+        };
+
+    } catch {
+
+        return {
+            unlockedStage: 1,
+            clearedStages: {},
+            bestTimes: {}
+        };
+
+    }
+
+}
+
+let progress = readProgress();
+
+let gameStats = {
+    startedAt: 0,
+    deaths: 0,
+    jumps: 0,
+    elapsed: 0
+};
+
+let lastStatsUpdate = 0;
+
+let audioContext = null;
+
+let particles = [];
+
+let lastMagnetEffectAt = 0;
+
+
+function playSound(type) {
+
+    if (!soundEnabled) {
+        return;
+    }
+
+    const AudioContextClass =
+        window.AudioContext ||
+        window.webkitAudioContext;
+
+    if (!AudioContextClass) {
+        return;
+    }
+
+
+    try {
+
+        audioContext ??= new AudioContextClass();
+
+        if (audioContext.state === "suspended") {
+            audioContext.resume();
+        }
+
+        const patterns = {
+            jump: [520, 760],
+            land: [220],
+            magnet: [390],
+            clear: [523, 659, 784],
+            death: [260, 180]
+        };
+
+        const notes = patterns[type] || [440];
+
+        notes.forEach((frequency, index) => {
+
+            const startTime =
+                audioContext.currentTime + index * 0.075;
+
+            const oscillator =
+                audioContext.createOscillator();
+
+            const gain =
+                audioContext.createGain();
+
+            oscillator.type = type === "death"
+                ? "sawtooth"
+                : "triangle";
+
+            oscillator.frequency.setValueAtTime(
+                frequency,
+                startTime
+            );
+
+            gain.gain.setValueAtTime(0.0001, startTime);
+
+            gain.gain.exponentialRampToValueAtTime(
+                0.08,
+                startTime + 0.015
+            );
+
+            gain.gain.exponentialRampToValueAtTime(
+                0.0001,
+                startTime + 0.16
+            );
+
+            oscillator.connect(gain);
+
+            gain.connect(audioContext.destination);
+
+            oscillator.start(startTime);
+
+            oscillator.stop(startTime + 0.17);
+
+        });
+
+    } catch {
+        // Audio is optional when the browser blocks audio initialization.
+    }
+
+}
+
+
+function spawnParticles(x, y, color, count = 12) {
+
+    if (!effectEnabled) {
+        return;
+    }
+
+    for (let index = 0; index < count; index++) {
+
+        const angle =
+            Math.random() * Math.PI * 2;
+
+        const speed =
+            1 + Math.random() * 3.5;
+
+        particles.push({
+            x,
+            y,
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed,
+            radius: 2 + Math.random() * 3,
+            color,
+            life: 1
+        });
+
+    }
+
+}
+
+
+function updateParticles() {
+
+    particles = particles.filter(particle => {
+
+        particle.x += particle.vx;
+
+        particle.y += particle.vy;
+
+        particle.vy += 0.04;
+
+        particle.vx *= 0.98;
+
+        particle.life -= 0.025;
+
+        return particle.life > 0;
+
+    });
+
+}
 
 
 /* =========================================================
@@ -72,6 +263,8 @@ const player = {
     friction: 0.82,
 
     gravity: 0.65,
+
+    polarity: -1,
 
     onGround: false
 
@@ -162,6 +355,8 @@ let magnets = [];
 
 let magneticObjects = [];
 
+let pits = [];
+
 
 /* =========================================================
    GOAL
@@ -186,52 +381,58 @@ const stageData = {
 
     1: {
         goal: { x: 1120, y: 450, width: 20, height: 150 },
+        pits: [
+            { x: 760, width: 120 }
+        ],
         obstacles: [
             { x: 430, y: 470, width: 70, height: 130 }
         ],
         magnets: [
-            { x: 465, y: 445, radius: 260, strength: 0.9 }
+            { x: 465, y: 445, radius: 260, strength: 0.9, polarity: 1 }
         ],
         magneticObjects: [
-            { x: 650, y: 300, radius: 15, mass: 1, color: "#f5b942" }
+            { x: 650, y: 300, radius: 15, mass: 1, polarity: -1, color: "#f5b942" }
         ]
     },
 
     2: {
         goal: { x: 1120, y: 400, width: 20, height: 200 },
+        pits: [{ x: 510, width: 90 }],
         obstacles: [
             { x: 350, y: 420, width: 70, height: 180 },
             { x: 700, y: 350, width: 70, height: 250 }
         ],
         magnets: [
-            { x: 520, y: 330, radius: 360, strength: 0.75 },
-            { x: 900, y: 300, radius: 360, strength: 0.75 }
+            { x: 520, y: 330, radius: 360, strength: 0.75, polarity: 1 },
+            { x: 900, y: 300, radius: 360, strength: 0.75, polarity: -1 }
         ],
         magneticObjects: [
-            { x: 570, y: 190, radius: 15, mass: 1, color: "#ff7c66" },
-            { x: 970, y: 200, radius: 15, mass: 1, color: "#9b8cff" }
+            { x: 570, y: 190, radius: 15, mass: 1, polarity: -1, color: "#ff7c66" },
+            { x: 970, y: 200, radius: 15, mass: 1, polarity: 1, color: "#9b8cff" }
         ]
     },
 
     3: {
         goal: { x: 1080, y: 350, width: 20, height: 250 },
+        pits: [{ x: 670, width: 110 }],
         obstacles: [
             { x: 300, y: 460, width: 70, height: 140 },
             { x: 550, y: 350, width: 70, height: 250 },
             { x: 820, y: 430, width: 70, height: 170 }
         ],
         magnets: [
-            { x: 460, y: 390, radius: 360, strength: 0.8 },
-            { x: 930, y: 370, radius: 360, strength: 0.8 }
+            { x: 460, y: 390, radius: 360, strength: 0.8, polarity: 1 },
+            { x: 930, y: 370, radius: 360, strength: 0.8, polarity: -1 }
         ],
         magneticObjects: [
-            { x: 400, y: 260, radius: 15, mass: 1, color: "#f5b942" },
-            { x: 1000, y: 240, radius: 15, mass: 1, color: "#ff7c66" }
+            { x: 400, y: 260, radius: 15, mass: 1, polarity: -1, color: "#f5b942" },
+            { x: 1000, y: 240, radius: 15, mass: 1, polarity: 1, color: "#ff7c66" }
         ]
     },
 
     4: {
         goal: { x: 1120, y: 420, width: 20, height: 180 },
+        pits: [{ x: 620, width: 110 }],
         obstacles: [
             { x: 280, y: 400, width: 70, height: 200 },
             { x: 500, y: 470, width: 70, height: 130 },
@@ -239,17 +440,18 @@ const stageData = {
             { x: 920, y: 450, width: 70, height: 150 }
         ],
         magnets: [
-            { x: 430, y: 330, radius: 350, strength: 0.75 },
-            { x: 820, y: 300, radius: 370, strength: 0.85 }
+            { x: 430, y: 330, radius: 350, strength: 0.75, polarity: 1 },
+            { x: 820, y: 300, radius: 370, strength: 0.85, polarity: -1 }
         ],
         magneticObjects: [
-            { x: 430, y: 230, radius: 15, mass: 1, color: "#9b8cff" },
-            { x: 850, y: 190, radius: 15, mass: 1, color: "#f5b942" }
+            { x: 430, y: 230, radius: 15, mass: 1, polarity: 1, color: "#9b8cff" },
+            { x: 850, y: 190, radius: 15, mass: 1, polarity: -1, color: "#f5b942" }
         ]
     },
 
     5: {
         goal: { x: 1080, y: 380, width: 20, height: 220 },
+        pits: [{ x: 600, width: 120 }],
         obstacles: [
             { x: 280, y: 350, width: 70, height: 250 },
             { x: 500, y: 450, width: 70, height: 150 },
@@ -257,12 +459,279 @@ const stageData = {
             { x: 940, y: 430, width: 70, height: 170 }
         ],
         magnets: [
-            { x: 420, y: 300, radius: 370, strength: 0.85 },
-            { x: 850, y: 280, radius: 390, strength: 1.2 }
+            { x: 420, y: 300, radius: 370, strength: 0.85, polarity: 1 },
+            { x: 850, y: 280, radius: 390, strength: 1.2, polarity: -1 }
         ],
         magneticObjects: [
-            { x: 420, y: 200, radius: 15, mass: 1, color: "#ff7c66" },
-            { x: 920, y: 180, radius: 15, mass: 1, color: "#9b8cff" }
+            { x: 420, y: 200, radius: 15, mass: 1, polarity: -1, color: "#ff7c66" },
+            { x: 920, y: 180, radius: 15, mass: 1, polarity: 1, color: "#9b8cff" }
+        ]
+    },
+
+    6: {
+        goal: { x: 1140, y: 420, width: 20, height: 180 },
+        pits: [{ x: 610, width: 110 }],
+        obstacles: [
+            { x: 330, y: 440, width: 80, height: 160 },
+            { x: 790, y: 390, width: 90, height: 210 }
+        ],
+        magnets: [
+            { x: 500, y: 360, radius: 300, strength: 0.78, polarity: 1 },
+            { x: 940, y: 330, radius: 250, strength: 0.72, polarity: -1 }
+        ],
+        magneticObjects: [
+            { x: 660, y: 250, radius: 16, mass: 1, polarity: -1, color: "#f5b942" }
+        ]
+    },
+
+    7: {
+        goal: { x: 1100, y: 390, width: 24, height: 210 },
+        pits: [{ x: 440, width: 90 }, { x: 850, width: 100 }],
+        obstacles: [
+            { x: 300, y: 400, width: 70, height: 200 },
+            { x: 620, y: 460, width: 80, height: 140 }
+        ],
+        magnets: [
+            { x: 420, y: 330, radius: 250, strength: 0.72, polarity: -1 },
+            { x: 760, y: 350, radius: 290, strength: 0.8, polarity: 1 }
+        ],
+        magneticObjects: [
+            { x: 560, y: 220, radius: 15, mass: 1.1, polarity: 1, color: "#ff7c66" },
+            { x: 940, y: 230, radius: 15, mass: 0.9, polarity: -1, color: "#9b8cff" }
+        ]
+    },
+
+    8: {
+        goal: { x: 1160, y: 440, width: 20, height: 160 },
+        pits: [{ x: 700, width: 145 }],
+        obstacles: [
+            { x: 390, y: 450, width: 90, height: 150 },
+            { x: 900, y: 390, width: 80, height: 210 }
+        ],
+        magnets: [
+            { x: 570, y: 300, radius: 320, strength: 0.82, polarity: 1 },
+            { x: 850, y: 270, radius: 260, strength: 0.7, polarity: 1 }
+        ],
+        magneticObjects: [
+            { x: 680, y: 180, radius: 17, mass: 1, polarity: -1, color: "#f5b942" }
+        ]
+    },
+
+    9: {
+        goal: { x: 1120, y: 350, width: 22, height: 250 },
+        pits: [{ x: 520, width: 115 }],
+        obstacles: [
+            { x: 360, y: 380, width: 70, height: 220 },
+            { x: 710, y: 430, width: 85, height: 170 },
+            { x: 930, y: 360, width: 70, height: 240 }
+        ],
+        magnets: [
+            { x: 490, y: 320, radius: 260, strength: 0.72, polarity: 1 },
+            { x: 830, y: 290, radius: 300, strength: 0.8, polarity: -1 }
+        ],
+        magneticObjects: [
+            { x: 620, y: 220, radius: 15, mass: 1, polarity: -1, color: "#9b8cff" },
+            { x: 1020, y: 190, radius: 15, mass: 1.2, polarity: 1, color: "#ff7c66" }
+        ]
+    },
+
+    10: {
+        goal: { x: 1160, y: 410, width: 20, height: 190 },
+        pits: [{ x: 390, width: 85 }, { x: 770, width: 125 }],
+        obstacles: [
+            { x: 520, y: 440, width: 75, height: 160 },
+            { x: 970, y: 400, width: 80, height: 200 }
+        ],
+        magnets: [
+            { x: 470, y: 330, radius: 260, strength: 0.75, polarity: -1 },
+            { x: 700, y: 300, radius: 310, strength: 0.82, polarity: 1 },
+            { x: 1030, y: 300, radius: 260, strength: 0.72, polarity: -1 }
+        ],
+        magneticObjects: [
+            { x: 620, y: 200, radius: 15, mass: 1, polarity: -1, color: "#f5b942" }
+        ]
+    },
+
+    11: {
+        goal: { x: 1120, y: 380, width: 22, height: 220 },
+        pits: [{ x: 580, width: 125 }],
+        obstacles: [
+            { x: 300, y: 430, width: 85, height: 170 },
+            { x: 760, y: 370, width: 80, height: 230 },
+            { x: 960, y: 470, width: 70, height: 130 }
+        ],
+        magnets: [
+            { x: 450, y: 330, radius: 280, strength: 0.78, polarity: 1 },
+            { x: 880, y: 300, radius: 340, strength: 0.84, polarity: -1 }
+        ],
+        magneticObjects: [
+            { x: 600, y: 200, radius: 15, mass: 0.85, polarity: -1, color: "#ff7c66" },
+            { x: 1060, y: 250, radius: 16, mass: 1.15, polarity: 1, color: "#9b8cff" }
+        ]
+    },
+
+    12: {
+        goal: { x: 1160, y: 430, width: 20, height: 170 },
+        pits: [{ x: 420, width: 100 }, { x: 870, width: 110 }],
+        obstacles: [
+            { x: 570, y: 400, width: 90, height: 200 },
+            { x: 740, y: 460, width: 75, height: 140 }
+        ],
+        magnets: [
+            { x: 480, y: 300, radius: 300, strength: 0.8, polarity: 1 },
+            { x: 800, y: 330, radius: 300, strength: 0.8, polarity: -1 },
+            { x: 1060, y: 290, radius: 240, strength: 0.68, polarity: 1 }
+        ],
+        magneticObjects: [
+            { x: 680, y: 190, radius: 16, mass: 1, polarity: 1, color: "#f5b942" }
+        ]
+    },
+
+    13: {
+        goal: { x: 1100, y: 360, width: 24, height: 240 },
+        pits: [{ x: 640, width: 145 }],
+        obstacles: [
+            { x: 330, y: 390, width: 75, height: 210 },
+            { x: 520, y: 470, width: 80, height: 130 },
+            { x: 870, y: 410, width: 85, height: 190 }
+        ],
+        magnets: [
+            { x: 450, y: 320, radius: 260, strength: 0.76, polarity: -1 },
+            { x: 750, y: 280, radius: 330, strength: 0.84, polarity: 1 },
+            { x: 1010, y: 310, radius: 270, strength: 0.72, polarity: -1 }
+        ],
+        magneticObjects: [
+            { x: 620, y: 190, radius: 15, mass: 1.25, polarity: 1, color: "#9b8cff" },
+            { x: 950, y: 210, radius: 15, mass: 0.8, polarity: -1, color: "#ff7c66" }
+        ]
+    },
+
+    14: {
+        goal: { x: 1150, y: 400, width: 20, height: 200 },
+        pits: [{ x: 480, width: 120 }, { x: 790, width: 100 }],
+        obstacles: [
+            { x: 350, y: 450, width: 75, height: 150 },
+            { x: 650, y: 380, width: 90, height: 220 },
+            { x: 950, y: 440, width: 80, height: 160 }
+        ],
+        magnets: [
+            { x: 530, y: 300, radius: 300, strength: 0.82, polarity: 1 },
+            { x: 850, y: 280, radius: 310, strength: 0.82, polarity: -1 }
+        ],
+        magneticObjects: [
+            { x: 700, y: 190, radius: 16, mass: 1, polarity: -1, color: "#f5b942" }
+        ]
+    },
+
+    15: {
+        goal: { x: 1120, y: 350, width: 24, height: 250 },
+        pits: [{ x: 350, width: 90 }, { x: 690, width: 120 }, { x: 960, width: 80 }],
+        obstacles: [
+            { x: 500, y: 420, width: 75, height: 180 },
+            { x: 850, y: 390, width: 80, height: 210 }
+        ],
+        magnets: [
+            { x: 420, y: 300, radius: 250, strength: 0.76, polarity: -1 },
+            { x: 650, y: 300, radius: 300, strength: 0.84, polarity: 1 },
+            { x: 920, y: 280, radius: 300, strength: 0.82, polarity: -1 }
+        ],
+        magneticObjects: [
+            { x: 590, y: 190, radius: 15, mass: 0.9, polarity: 1, color: "#ff7c66" },
+            { x: 1020, y: 200, radius: 16, mass: 1.2, polarity: 1, color: "#9b8cff" }
+        ]
+    },
+
+    16: {
+        goal: { x: 1160, y: 420, width: 20, height: 180 },
+        pits: [{ x: 550, width: 135 }, { x: 900, width: 120 }],
+        obstacles: [
+            { x: 330, y: 400, width: 80, height: 200 },
+            { x: 720, y: 430, width: 85, height: 170 },
+            { x: 1020, y: 380, width: 70, height: 220 }
+        ],
+        magnets: [
+            { x: 470, y: 280, radius: 290, strength: 0.8, polarity: 1 },
+            { x: 790, y: 300, radius: 330, strength: 0.84, polarity: -1 },
+            { x: 1090, y: 270, radius: 240, strength: 0.7, polarity: 1 }
+        ],
+        magneticObjects: [
+            { x: 630, y: 180, radius: 15, mass: 1, polarity: -1, color: "#f5b942" }
+        ]
+    },
+
+    17: {
+        goal: { x: 1100, y: 390, width: 24, height: 210 },
+        pits: [{ x: 430, width: 105 }, { x: 760, width: 140 }],
+        obstacles: [
+            { x: 310, y: 460, width: 70, height: 140 },
+            { x: 590, y: 370, width: 80, height: 230 },
+            { x: 930, y: 420, width: 90, height: 180 }
+        ],
+        magnets: [
+            { x: 480, y: 310, radius: 280, strength: 0.78, polarity: -1 },
+            { x: 710, y: 270, radius: 320, strength: 0.86, polarity: 1 },
+            { x: 1010, y: 320, radius: 290, strength: 0.8, polarity: -1 }
+        ],
+        magneticObjects: [
+            { x: 690, y: 170, radius: 16, mass: 1.15, polarity: -1, color: "#ff7c66" },
+            { x: 1050, y: 200, radius: 15, mass: 0.85, polarity: 1, color: "#9b8cff" }
+        ]
+    },
+
+    18: {
+        goal: { x: 1160, y: 360, width: 20, height: 240 },
+        pits: [{ x: 500, width: 100 }, { x: 830, width: 115 }],
+        obstacles: [
+            { x: 370, y: 410, width: 90, height: 190 },
+            { x: 650, y: 450, width: 80, height: 150 },
+            { x: 960, y: 380, width: 80, height: 220 }
+        ],
+        magnets: [
+            { x: 540, y: 290, radius: 300, strength: 0.82, polarity: 1 },
+            { x: 790, y: 300, radius: 320, strength: 0.84, polarity: -1 },
+            { x: 1080, y: 280, radius: 250, strength: 0.72, polarity: 1 }
+        ],
+        magneticObjects: [
+            { x: 620, y: 190, radius: 16, mass: 1, polarity: -1, color: "#f5b942" }
+        ]
+    },
+
+    19: {
+        goal: { x: 1120, y: 400, width: 24, height: 200 },
+        pits: [{ x: 380, width: 90 }, { x: 620, width: 110 }, { x: 890, width: 120 }],
+        obstacles: [
+            { x: 500, y: 400, width: 75, height: 200 },
+            { x: 790, y: 360, width: 85, height: 240 },
+            { x: 1030, y: 450, width: 60, height: 150 }
+        ],
+        magnets: [
+            { x: 430, y: 300, radius: 260, strength: 0.78, polarity: -1 },
+            { x: 700, y: 280, radius: 310, strength: 0.84, polarity: 1 },
+            { x: 970, y: 300, radius: 300, strength: 0.84, polarity: -1 }
+        ],
+        magneticObjects: [
+            { x: 590, y: 180, radius: 15, mass: 0.9, polarity: 1, color: "#9b8cff" },
+            { x: 900, y: 180, radius: 16, mass: 1.1, polarity: 1, color: "#ff7c66" }
+        ]
+    },
+
+    20: {
+        goal: { x: 1160, y: 340, width: 24, height: 260 },
+        pits: [{ x: 340, width: 100 }, { x: 570, width: 120 }, { x: 820, width: 130 }, { x: 1030, width: 70 }],
+        obstacles: [
+            { x: 460, y: 430, width: 75, height: 170 },
+            { x: 720, y: 380, width: 85, height: 220 },
+            { x: 970, y: 400, width: 55, height: 200 }
+        ],
+        magnets: [
+            { x: 400, y: 290, radius: 270, strength: 0.8, polarity: 1 },
+            { x: 650, y: 250, radius: 330, strength: 0.88, polarity: -1 },
+            { x: 900, y: 280, radius: 320, strength: 0.86, polarity: 1 },
+            { x: 1100, y: 250, radius: 230, strength: 0.72, polarity: -1 }
+        ],
+        magneticObjects: [
+            { x: 600, y: 170, radius: 16, mass: 1, polarity: 1, color: "#f5b942" },
+            { x: 890, y: 170, radius: 16, mass: 0.8, polarity: 1, color: "#ff7c66" }
         ]
     }
 
@@ -285,7 +754,7 @@ const stageGrid =
 
 for (
     let i = 1;
-    i <= 20;
+    i <= MAX_STAGES;
     i++
 ) {
 
@@ -297,12 +766,20 @@ for (
     button.className =
         "stage-button";
 
+    button.type = "button";
+
     button.textContent =
         i;
 
+    button.dataset.stage = i;
+
     button.addEventListener(
         "click",
-        () => loadStage(i)
+        () => {
+            if (i <= progress.unlockedStage) {
+                loadStage(i);
+            }
+        }
     );
 
     stageGrid.appendChild(
@@ -312,11 +789,117 @@ for (
 }
 
 
+function saveProgress() {
+
+    try {
+
+        localStorage.setItem(
+            PROGRESS_KEY,
+            JSON.stringify(progress)
+        );
+
+    } catch {
+        // Progress remains available for the current session.
+    }
+
+}
+
+
+function updateStageSelect() {
+
+    for (const button of stageGrid.children) {
+
+        const stageNumber =
+            Number(button.dataset.stage);
+
+        const isUnlocked =
+            stageNumber <= progress.unlockedStage;
+
+        button.disabled = !isUnlocked;
+
+        button.classList.toggle(
+            "cleared",
+            Boolean(progress.clearedStages[stageNumber])
+        );
+
+        button.textContent = isUnlocked
+            ? `${stageNumber}${progress.clearedStages[stageNumber] ? " ✓" : ""}`
+            : "🔒";
+
+        button.setAttribute(
+            "aria-label",
+            isUnlocked
+                ? `ステージ ${stageNumber}${progress.clearedStages[stageNumber] ? " クリア済み" : ""}`
+                : `ステージ ${stageNumber} ロック中`
+        );
+
+    }
+
+    document.getElementById("stageProgressText").textContent =
+        `UNLOCKED ${progress.unlockedStage} / ${MAX_STAGES}`;
+
+}
+
+
+function formatTime(milliseconds) {
+
+    const totalSeconds =
+        Math.max(0, milliseconds) / 1000;
+
+    const minutes =
+        Math.floor(totalSeconds / 60);
+
+    const seconds =
+        (totalSeconds % 60).toFixed(2).padStart(5, "0");
+
+    return `${minutes}:${seconds}`;
+
+}
+
+
+function updateRunStats(force = false) {
+
+    const now = performance.now();
+
+    if (!force && now - lastStatsUpdate < 200) {
+        return;
+    }
+
+    lastStatsUpdate = now;
+
+    const elapsed =
+        gameStats.elapsed +
+        (gameStats.startedAt
+            ? now - gameStats.startedAt
+            : 0);
+
+    document.getElementById("runTime").textContent =
+        formatTime(elapsed);
+
+    document.getElementById("runDeaths").textContent =
+        gameStats.deaths;
+
+    document.getElementById("runJumps").textContent =
+        gameStats.jumps;
+
+}
+
+
 /* =========================================================
    LOAD STAGE
 ========================================================= */
 
-function loadStage(stageNumber) {
+function loadStage(stageNumber, preserveRun = false) {
+
+    if (
+        stageNumber < 1 ||
+        stageNumber > MAX_STAGES ||
+        stageNumber > progress.unlockedStage
+    ) {
+
+        return;
+
+    }
 
     if (gameLoopRequest !== null) {
 
@@ -338,17 +921,8 @@ function loadStage(stageNumber) {
         `STAGE ${currentStage}`;
 
 
-    /*
-        Stage 6～20は後で個別設計する。
-        現段階では既存データをベースに仮配置する。
-    */
-
-    const baseStage =
-        ((stageNumber - 1) % 5) + 1;
-
-
     const stage =
-        stageData[baseStage];
+        stageData[stageNumber];
 
 
     obstacles =
@@ -358,57 +932,50 @@ function loadStage(stageNumber) {
 
     magnets =
         stage.magnets.map(
-            magnet => ({ ...magnet })
+            magnet => ({
+                ...magnet,
+                polarity: magnet.polarity || 1
+            })
         );
 
     magneticObjects =
         stage.magneticObjects.map(
-            object => ({ ...object })
+            object => ({
+                ...object,
+                vx: 0,
+                vy: 0,
+                polarity: object.polarity || -1,
+                spawnX: object.x,
+                spawnY: object.y
+            })
+        );
+
+    pits =
+        (stage.pits || []).map(
+            pit => ({ ...pit })
         );
 
     goal = { ...stage.goal };
 
 
-    /*
-        Stage 6～20の正式な構成は未確定。
-        個別ステージを作るまで仮配置を使用する。
-    */
+    resetPlayer();
 
-    const cycle =
-        Math.floor(
-            (stageNumber - 1) / 5
-        );
+    airJumpUsed = false;
 
+    if (!preserveRun) {
 
-    if (cycle > 0) {
+        gameStats = {
+            startedAt: performance.now(),
+            deaths: 0,
+            jumps: 0,
+            elapsed: 0
+        };
 
-        obstacles =
-            obstacles.map(
-                (obstacle, index) => {
+    } else {
 
-                    const shift =
-                        ((cycle * 37) +
-                        (index * 19)) % 70;
-
-                    return {
-
-                        ...obstacle,
-
-                        x:
-                            Math.min(
-                                obstacle.x + shift,
-                                1080
-                            )
-
-                    };
-
-                }
-            );
+        gameStats.startedAt = performance.now();
 
     }
-
-
-    resetPlayer();
 
     stageCleared = false;
 
@@ -419,6 +986,8 @@ function loadStage(stageNumber) {
     jumpChargeRatio = 0;
 
     updateJumpChargeUI();
+
+    updateRunStats(true);
 
     showScreen("game");
 
@@ -550,7 +1119,8 @@ function openSettings() {
 function restartStage() {
 
     loadStage(
-        currentStage
+        currentStage,
+        true
     );
 
 }
@@ -565,6 +1135,15 @@ function nextStage() {
     if (currentStage < 20) {
 
         currentStage++;
+
+        progress.unlockedStage = Math.max(
+            progress.unlockedStage,
+            currentStage
+        );
+
+        saveProgress();
+
+        updateStageSelect();
 
         loadStage(
             currentStage
@@ -616,6 +1195,11 @@ function toggleSound() {
             ? "ON"
             : "OFF";
 
+    button.setAttribute(
+        "aria-pressed",
+        soundEnabled
+    );
+
 }
 
 
@@ -655,6 +1239,11 @@ function toggleEffect() {
         effectEnabled
             ? "ON"
             : "OFF";
+
+    button.setAttribute(
+        "aria-pressed",
+        effectEnabled
+    );
 
 }
 
@@ -820,6 +1409,19 @@ window.addEventListener(
             player.vy -=
                 jumpPower;
 
+            gameStats.jumps++;
+
+            updateRunStats(true);
+
+            playSound("jump");
+
+            spawnParticles(
+                player.x + player.width / 2,
+                player.y + player.height,
+                "#63dbe4",
+                14
+            );
+
 
             player.onGround = false;
 
@@ -879,16 +1481,24 @@ function update() {
 
     updatePlayerPhysics();
 
+    if (!gameRunning) {
+        return;
+    }
+
+    updateMagneticObjects();
+
+    updateParticles();
+
     checkGoal();
+
+    updateRunStats();
 
 }
 
 
 function applyMagneticForce(target, targetX, targetY) {
 
-    let nearestMagnet = null;
-
-    let nearestDistance = Infinity;
+    let affected = false;
 
     for (const magnet of magnets) {
 
@@ -899,40 +1509,165 @@ function applyMagneticForce(target, targetX, targetY) {
         const distance = Math.hypot(dx, dy);
 
         if (
-            distance < magnet.radius &&
-            distance < nearestDistance
+            distance >= magnet.radius ||
+            distance <= 0
         ) {
 
-            nearestMagnet = magnet;
+            continue;
 
-            nearestDistance = distance;
+        }
+
+        const polarityProduct =
+            (target.polarity || -1) *
+            (magnet.polarity || 1);
+
+        const force =
+            magnet.strength *
+            (1 - distance / magnet.radius) *
+            -polarityProduct /
+            (target.mass || 1);
+
+        target.vx +=
+            dx / distance * force;
+
+        target.vy +=
+            dy / distance * force;
+
+        affected = true;
+
+    }
+
+    return affected;
+
+}
+
+
+function updateMagneticObjects() {
+
+    for (const object of magneticObjects) {
+
+        applyMagneticForce(
+            object,
+            object.x,
+            object.y
+        );
+
+        object.vy += 0.08;
+
+        object.vx *= 0.985;
+
+        object.vy *= 0.985;
+
+        object.vx = Math.max(-8, Math.min(8, object.vx));
+
+        object.vy = Math.max(-8, Math.min(8, object.vy));
+
+
+        const previousX = object.x;
+
+        const previousY = object.y;
+
+        object.x += object.vx;
+
+
+        for (const obstacle of obstacles) {
+
+            const overlapsX =
+                object.x + object.radius > obstacle.x &&
+                object.x - object.radius < obstacle.x + obstacle.width;
+
+            const overlapsY =
+                object.y + object.radius > obstacle.y &&
+                object.y - object.radius < obstacle.y + obstacle.height;
+
+
+            if (overlapsX && overlapsY) {
+
+                object.x = previousX;
+
+                object.vx *= -0.35;
+
+                break;
+
+            }
+
+        }
+
+
+        object.y += object.vy;
+
+
+        for (const obstacle of obstacles) {
+
+            const overlapsX =
+                object.x + object.radius > obstacle.x &&
+                object.x - object.radius < obstacle.x + obstacle.width;
+
+            const overlapsY =
+                object.y + object.radius > obstacle.y &&
+                object.y - object.radius < obstacle.y + obstacle.height;
+
+
+            if (overlapsX && overlapsY) {
+
+                object.y = previousY;
+
+                object.vy *= -0.35;
+
+                break;
+
+            }
+
+        }
+
+
+        if (
+            object.x - object.radius < 0 ||
+            object.x + object.radius > canvas.width
+        ) {
+
+            object.x = Math.max(
+                object.radius,
+                Math.min(canvas.width - object.radius, object.x)
+            );
+
+            object.vx *= -0.45;
+
+        }
+
+
+        const overPit =
+            pits.some(pit =>
+                object.x >= pit.x &&
+                object.x <= pit.x + pit.width
+            );
+
+
+        if (
+            !overPit &&
+            object.y + object.radius >= WORLD.groundY
+        ) {
+
+            object.y = WORLD.groundY - object.radius;
+
+            object.vy *= -0.25;
+
+        }
+
+
+        if (object.y > canvas.height + 80) {
+
+            object.x = object.spawnX;
+
+            object.y = object.spawnY;
+
+            object.vx = 0;
+
+            object.vy = 0;
 
         }
 
     }
-
-
-    if (!nearestMagnet || nearestDistance <= 0) {
-
-        return false;
-
-    }
-
-
-    const force =
-        nearestMagnet.strength *
-        (1 - nearestDistance / nearestMagnet.radius) /
-        (target.mass || 1);
-
-    target.vx +=
-        (nearestMagnet.x - targetX) /
-        nearestDistance * force;
-
-    target.vy +=
-        (nearestMagnet.y - targetY) /
-        nearestDistance * force;
-
-    return true;
 
 }
 
@@ -988,11 +1723,31 @@ function updateHorizontalMovement() {
         );
 
 
-    applyMagneticForce(
+    const magneticallyAffected =
+        applyMagneticForce(
         player,
         player.x + player.width / 2,
         player.y + player.height / 2
     );
+
+
+    if (
+        magneticallyAffected &&
+        performance.now() - lastMagnetEffectAt > 180
+    ) {
+
+        lastMagnetEffectAt = performance.now();
+
+        playSound("magnet");
+
+        spawnParticles(
+            player.x + player.width / 2,
+            player.y + player.height / 2,
+            "#75e5ef",
+            2
+        );
+
+    }
 
 
     player.vx =
@@ -1062,6 +1817,9 @@ function updateHorizontalMovement() {
 
 function updatePlayerPhysics() {
 
+    const wasOnGround =
+        player.onGround;
+
     const previousY =
         player.y;
 
@@ -1102,8 +1860,18 @@ function updatePlayerPhysics() {
     const groundTop =
         WORLD.groundY;
 
+    const playerCenterX =
+        player.x + player.width / 2;
+
+    const overPit =
+        pits.some(pit =>
+            playerCenterX >= pit.x &&
+            playerCenterX <= pit.x + pit.width
+        );
+
 
     if (
+        !overPit &&
         player.y +
         player.height >=
         groundTop &&
@@ -1228,10 +1996,27 @@ function updatePlayerPhysics() {
     }
 
 
-    /*
-        落下時は自動で初期位置へ戻さない。
-        死亡・リトライの仕様は別途実装する。
-    */
+    if (player.y > canvas.height + 100) {
+
+        playerDied();
+
+        return;
+
+    }
+
+
+    if (!wasOnGround && player.onGround) {
+
+        playSound("land");
+
+        spawnParticles(
+            player.x + player.width / 2,
+            player.y + player.height,
+            "#ffffff",
+            10
+        );
+
+    }
 
 }
 
@@ -1367,6 +2152,46 @@ function clearStage() {
 
     stageCleared = true;
 
+    playSound("clear");
+
+    spawnParticles(
+        player.x + player.width / 2,
+        player.y + player.height / 2,
+        "#ffe052",
+        32
+    );
+
+    gameStats.elapsed +=
+        performance.now() - gameStats.startedAt;
+
+    gameStats.startedAt = 0;
+
+    progress.clearedStages[currentStage] = true;
+
+    progress.unlockedStage = Math.min(
+        MAX_STAGES,
+        Math.max(progress.unlockedStage, currentStage + 1)
+    );
+
+    const previousBest =
+        progress.bestTimes[currentStage];
+
+    if (
+        !previousBest ||
+        gameStats.elapsed < previousBest
+    ) {
+
+        progress.bestTimes[currentStage] =
+            gameStats.elapsed;
+
+    }
+
+    saveProgress();
+
+    updateStageSelect();
+
+    updateRunStats(true);
+
     stopGameLoop();
 
     jumpCharging = false;
@@ -1381,8 +2206,51 @@ function clearStage() {
     ).textContent =
         `STAGE ${currentStage} CLEAR!`;
 
+    document.getElementById("clearStats").textContent =
+        `TIME ${formatTime(gameStats.elapsed)}   DEATHS ${gameStats.deaths}   JUMPS ${gameStats.jumps}`;
+
 
     showScreen("clear");
+
+}
+
+
+function playerDied() {
+
+    if (!gameRunning) {
+        return;
+    }
+
+    gameStats.deaths++;
+
+    playSound("death");
+
+    spawnParticles(
+        player.x + player.width / 2,
+        player.y + player.height / 2,
+        "#ff5268",
+        22
+    );
+
+    gameStats.elapsed +=
+        performance.now() - gameStats.startedAt;
+
+    gameStats.startedAt = 0;
+
+    stopGameLoop();
+
+    jumpCharging = false;
+
+    jumpChargeRatio = 0;
+
+    updateJumpChargeUI();
+
+    updateRunStats(true);
+
+    document.getElementById("gameOverText").textContent =
+        `STAGE ${currentStage}   TIME ${formatTime(gameStats.elapsed)}   DEATHS ${gameStats.deaths}`;
+
+    showScreen("gameOver");
 
 }
 
@@ -1710,8 +2578,9 @@ function drawMagnet(
         Magnet body
     */
 
-    ctx.strokeStyle =
-        "#d6334c";
+    ctx.strokeStyle = magnet.polarity > 0
+        ? "#d6334c"
+        : "#315bce";
 
     ctx.lineWidth = 9;
 
@@ -1749,8 +2618,9 @@ function drawMagnet(
         Blue side
     */
 
-    ctx.strokeStyle =
-        "#315bce";
+    ctx.strokeStyle = magnet.polarity > 0
+        ? "#315bce"
+        : "#d6334c";
 
     ctx.beginPath();
 
@@ -1769,6 +2639,26 @@ function drawMagnet(
 
     ctx.lineCap =
         "butt";
+
+    ctx.fillStyle = "#173d4d";
+
+    ctx.font = "bold 10px Trebuchet MS";
+
+    ctx.textAlign = "center";
+
+    ctx.fillText(
+        magnet.polarity > 0 ? "N" : "S",
+        -15,
+        -18
+    );
+
+    ctx.fillText(
+        magnet.polarity > 0 ? "S" : "N",
+        15,
+        -18
+    );
+
+    ctx.textAlign = "start";
 
 
     ctx.restore();
@@ -1836,6 +2726,24 @@ function drawMagneticObjects() {
 
             ctx.stroke();
 
+            ctx.font = "bold 12px Trebuchet MS";
+
+            ctx.textAlign = "center";
+
+            ctx.textBaseline = "middle";
+
+            ctx.fillStyle = "#173d4d";
+
+            ctx.fillText(
+                object.polarity > 0 ? "N" : "S",
+                centerX,
+                centerY
+            );
+
+            ctx.textAlign = "start";
+
+            ctx.textBaseline = "alphabetic";
+
 
             /*
                 Shine
@@ -1858,6 +2766,33 @@ function drawMagneticObjects() {
 
         }
     );
+
+}
+
+
+function drawParticles() {
+
+    for (const particle of particles) {
+
+        ctx.globalAlpha = particle.life;
+
+        ctx.fillStyle = particle.color;
+
+        ctx.beginPath();
+
+        ctx.arc(
+            particle.x,
+            particle.y,
+            particle.radius * particle.life,
+            0,
+            Math.PI * 2
+        );
+
+        ctx.fill();
+
+    }
+
+    ctx.globalAlpha = 1;
 
 }
 
@@ -2086,13 +3021,50 @@ function draw() {
     ctx.fillStyle =
         groundGradient;
 
-    ctx.fillRect(
-        0,
-        WORLD.groundY,
-        canvas.width,
-        canvas.height -
-        WORLD.groundY
-    );
+    let groundStart = 0;
+
+    for (const pit of pits) {
+
+        const pitStart = Math.max(0, pit.x);
+        const pitEnd = Math.min(canvas.width, pit.x + pit.width);
+
+        if (pitStart > groundStart) {
+
+            ctx.fillRect(
+                groundStart,
+                WORLD.groundY,
+                pitStart - groundStart,
+                canvas.height - WORLD.groundY
+            );
+
+        }
+
+        ctx.fillStyle = "#173d4d";
+
+        ctx.fillRect(
+            pitStart,
+            WORLD.groundY,
+            pitEnd - pitStart,
+            canvas.height - WORLD.groundY
+        );
+
+        ctx.fillStyle = groundGradient;
+
+        groundStart = pitEnd;
+
+    }
+
+
+    if (groundStart < canvas.width) {
+
+        ctx.fillRect(
+            groundStart,
+            WORLD.groundY,
+            canvas.width - groundStart,
+            canvas.height - WORLD.groundY
+        );
+
+    }
 
 
     ctx.strokeStyle =
@@ -2100,17 +3072,30 @@ function draw() {
 
     ctx.lineWidth = 5;
 
+    let groundLineStart = 0;
+
+    for (const pit of pits) {
+
+        ctx.beginPath();
+
+        ctx.moveTo(groundLineStart, WORLD.groundY);
+
+        ctx.lineTo(Math.max(groundLineStart, pit.x), WORLD.groundY);
+
+        ctx.stroke();
+
+        groundLineStart = Math.min(
+            canvas.width,
+            pit.x + pit.width
+        );
+
+    }
+
     ctx.beginPath();
 
-    ctx.moveTo(
-        0,
-        WORLD.groundY
-    );
+    ctx.moveTo(groundLineStart, WORLD.groundY);
 
-    ctx.lineTo(
-        canvas.width,
-        WORLD.groundY
-    );
+    ctx.lineTo(canvas.width, WORLD.groundY);
 
     ctx.stroke();
 
@@ -2134,6 +3119,8 @@ function draw() {
     */
 
     drawMagneticObjects();
+
+    drawParticles();
 
 
     /*
@@ -2181,3 +3168,5 @@ function gameLoop() {
 showScreen("home");
 
 updateJumpChargeUI();
+
+updateStageSelect();

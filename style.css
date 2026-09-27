@@ -425,6 +425,17 @@ body {
     gap: 22px;
 }
 
+.stage-progress-text {
+    position: relative;
+    z-index: 3;
+    margin: 18px 0 -34px;
+    color: white;
+    font-size: 16px;
+    font-weight: 900;
+    text-align: center;
+    text-shadow: 2px 2px 0 #173d4d;
+}
+
 .stage-button {
     height: 100px;
 
@@ -456,6 +467,18 @@ body {
     transform:
         translateY(-4px)
         scale(1.03);
+}
+
+.stage-button:disabled {
+    color: #71858a;
+    background: #cbd8da;
+    box-shadow: 0 6px 0 #61777c;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.stage-button.cleared {
+    background: linear-gradient(180deg, #efffc9, #c6ef80);
 }
 
 .stage-button:active {
@@ -580,6 +603,28 @@ body {
 
     text-shadow:
         3px 3px 0 #173d4d;
+}
+
+.run-stats {
+    position: absolute;
+    top: 66px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 18px;
+    padding: 7px 13px;
+    border: 2px solid rgba(23,61,77,0.7);
+    border-radius: 12px;
+    background: rgba(255,255,255,0.78);
+    color: #173d4d;
+    font-size: 14px;
+    line-height: 1;
+    text-shadow: none;
+    white-space: nowrap;
+}
+
+.run-stats strong {
+    font-variant-numeric: tabular-nums;
 }
 
 .game-button {
@@ -787,6 +832,21 @@ body {
 
     box-shadow:
         0 12px 0 #173d4d;
+
+    animation:
+        resultPop 0.32s ease-out both;
+}
+
+@keyframes resultPop {
+    from {
+        opacity: 0;
+        transform: translate(-50%, -46%) scale(0.94);
+    }
+
+    to {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
+    }
 }
 
 .clear-panel h1 {
@@ -806,6 +866,17 @@ body {
 
 .clear-panel .menu-button {
     margin-top: 15px;
+}
+
+.clear-panel .clear-stats {
+    margin: 0 0 20px;
+    font-size: 16px;
+    font-weight: 900;
+    line-height: 1.6;
+}
+
+.game-over-panel h1 {
+    color: #d6334c;
 }
 
 
@@ -844,6 +915,11 @@ body {
         gap: 10px;
     }
 
+    .stage-progress-text {
+        margin-top: 10px;
+        font-size: 13px;
+    }
+
     .stage-button {
         height: 70px;
         font-size: 25px;
@@ -856,6 +932,13 @@ body {
     .controls {
         font-size: 10px;
         gap: 8px;
+    }
+
+    .run-stats {
+        top: 66px;
+        gap: 8px;
+        padding: 6px 8px;
+        font-size: 10px;
     }
 
     .jump-charge-ui {

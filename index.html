@@ -127,6 +127,8 @@
     <h1 class="screen-title">
         STAGE SELECT
     </h1>
+    
+        <p id="stageProgressText" class="stage-progress-text"></p>
 
 
     <div
@@ -279,6 +281,12 @@
             STAGE 1
         </span>
 
+        <div class="run-stats" aria-live="polite">
+            <span>TIME <strong id="runTime">0:00.00</strong></span>
+            <span>DEATHS <strong id="runDeaths">0</strong></span>
+            <span>JUMPS <strong id="runJumps">0</strong></span>
+        </div>
+
 
         <button
             type="button"
@@ -360,7 +368,7 @@
         </span>
 
         <span>
-            AIR: RE-PRESS AT 120PX+
+            AIR JUMP: ONCE AT 120PX+
         </span>
 
     </div>
@@ -368,6 +376,51 @@
 </main>
 
 
+        <!-- =====================================================
+             GAME OVER
+        ====================================================== -->
+
+        <main
+            id="gameOverScreen"
+            class="screen"
+            aria-label="ゲームオーバー"
+        >
+
+            <div class="game-background" aria-hidden="true"></div>
+
+            <div class="clear-panel game-over-panel">
+
+                <h1>GAME OVER</h1>
+
+                <p id="gameOverText">STAGE 1</p>
+
+                <button
+                    type="button"
+                    class="menu-button start-button"
+                    onclick="restartStage()"
+                >
+                    RETRY
+                </button>
+
+                <button
+                    type="button"
+                    class="menu-button"
+                    onclick="openMenu()"
+                >
+                    STAGE SELECT
+                </button>
+
+                <button
+                    type="button"
+                    class="menu-button"
+                    onclick="backToHome()"
+                >
+                    HOME
+                </button>
+
+            </div>
+
+        </main>
 
 <!-- =====================================================
      CLEAR SCREEN
@@ -395,6 +448,8 @@
         <p id="clearStageText">
             STAGE 1 CLEAR!
         </p>
+
+        <p id="clearStats" class="clear-stats"></p>
 
 
         <button
