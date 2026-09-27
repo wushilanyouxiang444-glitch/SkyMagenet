@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>SkyMagnet</title>
+
+    <link
+        rel="stylesheet"
+        href="style.css"
+    >
+</head>
+
+
+<body>
+
+
+<!-- =====================================================
+     HOME SCREEN
+====================================================== -->
+
+<main
+    id="homeScreen"
+    class="screen active"
+    aria-label="SkyMagnet ホーム画面"
+>
+
+    <div
+        class="home-background"
+        aria-hidden="true"
+    ></div>
+
+
+    <div class="home-content">
+
+        <!-- TITLE -->
+
+        <img
+            src="assets/gametitle-removebg-preview.png"
+            class="game-title"
+            alt="SkyMagnet"
+        >
+
+
+        <!-- CHARACTER -->
+
+        <img
+            src="assets/SkyMagnet_Nomal-removebg-preview.png"
+            class="character home-character"
+            alt="SkyMagnet キャラクター"
+        >
+
+
+        <!-- MENU -->
+
+        <nav
+            class="home-menu"
+            aria-label="メインメニュー"
+        >
+
+            <button
+                type="button"
+                class="menu-button start-button"
+                onclick="startGame()"
+            >
+                START
+            </button>
+
+
+            <button
+                type="button"
+                class="menu-button"
+                onclick="openMenu()"
+            >
+                STAGE SELECT
+            </button>
+
+
+            <button
+                type="button"
+                class="menu-button"
+                onclick="openSettings()"
+            >
+                SETTINGS
+            </button>
+
+        </nav>
+
+    </div>
+
+</main>
+
+
+
+<!-- =====================================================
+     STAGE SELECT
+====================================================== -->
+
+<main
+    id="menuScreen"
+    class="screen"
+    aria-label="ステージ選択"
+>
+
+    <div
+        class="game-background"
+        aria-hidden="true"
+    ></div>
+
+
+    <button
+        type="button"
+        class="back-button"
+        onclick="backToHome()"
+        aria-label="ホームへ戻る"
+    >
+        ←
+    </button>
+
+
+    <h1 class="screen-title">
+        STAGE SELECT
+    </h1>
+
+
+    <div
+        id="stageGrid"
+        class="stage-grid"
+        aria-label="ステージ一覧"
+    ></div>
+
+</main>
+
+
+
+<!-- =====================================================
+     SETTINGS
+====================================================== -->
+
+<main
+    id="settingsScreen"
+    class="screen"
+    aria-label="設定"
+>
+
+    <div
+        class="game-background"
+        aria-hidden="true"
+    ></div>
+
+
+    <button
+        type="button"
+        class="back-button"
+        onclick="backToHome()"
+        aria-label="ホームへ戻る"
+    >
+        ←
+    </button>
+
+
+    <h1 class="screen-title">
+        SETTINGS
+    </h1>
+
+
+    <div class="settings-panel">
+
+
+        <!-- SOUND -->
+
+        <div class="setting">
+
+            <span>
+                Sound
+            </span>
+
+
+            <button
+                type="button"
+                id="soundToggle"
+                class="toggle on"
+                onclick="toggleSound()"
+                aria-label="サウンド設定"
+                aria-pressed="true"
+            >
+                <span></span>
+            </button>
+
+
+            <strong id="soundText">
+                ON
+            </strong>
+
+        </div>
+
+
+
+        <!-- EFFECT -->
+
+        <div class="setting">
+
+            <span>
+                Effect
+            </span>
+
+
+            <button
+                type="button"
+                id="effectToggle"
+                class="toggle off"
+                onclick="toggleEffect()"
+                aria-label="エフェクト設定"
+                aria-pressed="false"
+            >
+                <span></span>
+            </button>
+
+
+            <strong id="effectText">
+                OFF
+            </strong>
+
+        </div>
+
+
+    </div>
+
+</main>
+
+
+
+<!-- =====================================================
+     GAME SCREEN
+====================================================== -->
+
+<main
+    id="gameScreen"
+    class="screen"
+    aria-label="ゲーム画面"
+>
+
+    <!--
+        ホーム画面とは完全に別の背景。
+        ここにホーム背景を流用しない。
+    -->
+
+    <div
+        class="game-background"
+        aria-hidden="true"
+    ></div>
+
+
+    <!-- =================================================
+         GAME UI
+    ================================================== -->
+
+    <div class="game-ui">
+
+        <button
+            type="button"
+            class="game-button"
+            onclick="backToHome()"
+        >
+            HOME
+        </button>
+
+
+        <span
+            id="stageTitle"
+            aria-live="polite"
+        >
+            STAGE 1
+        </span>
+
+
+        <button
+            type="button"
+            class="game-button"
+            onclick="restartStage()"
+        >
+            RETRY
+        </button>
+
+    </div>
+
+
+
+    <!-- =================================================
+         CANVAS
+    ================================================== -->
+
+    <canvas
+        id="gameCanvas"
+        width="1280"
+        height="720"
+        aria-label="SkyMagnet ゲームフィールド"
+    ></canvas>
+
+
+
+    <!-- =================================================
+         JUMP CHARGE UI
+    ================================================== -->
+
+    <div
+        id="jumpChargeUI"
+        class="jump-charge-ui"
+        aria-label="ジャンプチャージ"
+    >
+
+        <div class="jump-charge-title">
+            JUMP POWER
+        </div>
+
+
+        <div class="jump-charge-bar">
+
+            <div
+                id="jumpChargeFill"
+                class="jump-charge-fill"
+            ></div>
+
+        </div>
+
+
+        <div
+            id="jumpChargePercent"
+            class="jump-charge-percent"
+            aria-live="polite"
+        >
+            0%
+        </div>
+
+    </div>
+
+
+
+    <!-- =================================================
+         CONTROLS
+    ================================================== -->
+
+    <div
+        class="controls"
+        aria-label="操作説明"
+    >
+
+        <span>
+            ← → / A D : MOVE
+        </span>
+
+        <span>
+            SPACE: HOLD / RELEASE TO JUMP
+        </span>
+
+        <span>
+            AIR: RE-PRESS AT 120PX+
+        </span>
+
+    </div>
+
+</main>
+
+
+
+<!-- =====================================================
+     CLEAR SCREEN
+====================================================== -->
+
+<main
+    id="clearScreen"
+    class="screen"
+    aria-label="ステージクリア"
+>
+
+    <div
+        class="game-background"
+        aria-hidden="true"
+    ></div>
+
+
+    <div class="clear-panel">
+
+        <h1>
+            STAGE CLEAR!
+        </h1>
+
+
+        <p id="clearStageText">
+            STAGE 1 CLEAR!
+        </p>
+
+
+        <button
+            type="button"
+            class="menu-button"
+            onclick="nextStage()"
+        >
+            NEXT STAGE
+        </button>
+
+
+        <button
+            type="button"
+            class="menu-button"
+            onclick="restartStage()"
+        >
+            RETRY
+        </button>
+
+
+        <button
+            type="button"
+            class="menu-button"
+            onclick="openMenu()"
+        >
+            STAGE SELECT
+        </button>
+
+    </div>
+
+</main>
+
+
+
+<!-- =====================================================
+     SCRIPT
+====================================================== -->
+
+<script src="script.js"></script>
+
+</body>
+
+</html>
